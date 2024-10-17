@@ -15,7 +15,7 @@ set (NVIDIA "" CACHE PATH "Path to Nvidia driver source")
 set (KERNEL "/lib/modules/${CMAKE_SYSTEM_VERSION}/build" CACHE PATH "Path to kernel source, or module directory")
 set (FIO "" CACHE PATH "Path to FIO installation")
 
-set (nvidia_archs "70;80;90" CACHE STRING "NVIDIA compute architectures")
+set (nvidia_archs "80;86;87" CACHE STRING "NVIDIA compute architectures")
 set (no_smartio_samples true CACHE BOOL "Do not use SISCI for examples")
 set (no_smartio_benchmarks true CACHE BOOL "Do not use SISCI for benchmarks")
 set (no_smartio true CACHE BOOL "Do not use SISCI for library or examples")
@@ -48,6 +48,8 @@ set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -std=c++11" CACHE INTERNA
 set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_DEBUG} -g -DDEBUG " CACHE INTERNAL "" FORCE)
 set (CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -std=c++11" CACHE INTERNAL "" FORCE)
 set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -lineinfo -D__CUDA__ -D__CUDACC__ -O3;-std=c++11;${GPU_ARCHS}")
+#set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -g -G -D__CUDA__ -D__CUDACC__ -O3;-std=c++11;${GPU_ARCHS}")
+#set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -maxrregcount 24 -Xptxas -v")
 set (CUDA_NVCC_FLAGS_RELEASE "${CMAKE_NVCC_FLAGS_RELEASE} -O2" CACHE INTERNAL "" FORCE)
 
 if (no_cc)
@@ -129,7 +131,7 @@ set (fio_output "${CMAKE_BINARY_DIR}/fio")
 
 
 # Set include directories
-include_directories ("${PROJECT_BINARY_DIR}/include" "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/include/freestanding/include")
+include_directories ("${PROJECT_BINARY_DIR}/include" "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/include/freestanding/include" "/usr/local/cuda/include")
 if (sisci_include)
     include_directories ("${PROJECT_BINARY_DIR}/include" "${PROJECT_SOURCE_DIR}/include" "${sisci_include}" "${sisci_include}/dis")
 endif ()
@@ -265,6 +267,49 @@ macro (make_benchmark target binary_name files)
     endif ()
 endmacro ()
 
+macro (make_benchmark_multifiles target binary_name files subdir c_files)
+    if (CUDA_FOUND AND NOT no_cuda)
+        set_source_files_properties(${subdir} PROPERTIES LANGUAGE CUDA)
+        add_library(kernels STATIC ${subdir})
+        add_library(utils STATIC ${c_files})
+        set_target_properties(kernels PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+        cuda_add_executable (${target} EXCLUDE_FROM_ALL ${files} OPTIONS ${GPU_ARCHS} -D__CUDA__) # Ugly bugly
+        target_compile_definitions (${target} PRIVATE __CUDA__)
+
+        add_dependencies (${target} libnvm)
+        
+        target_link_libraries (${target} libnvm)
+        target_link_libraries (${target} ${CUDA_LIBRARIES})
+        target_link_libraries (${target} kernels)
+        target_link_libraries (${target} utils)
+        set_target_properties (${target} PROPERTIES OUTPUT_NAME "nvm-${binary_name}")
+
+        list (APPEND benchmark_targets "${target}")
+        set (benchmark_targets "${benchmark_targets}" PARENT_SCOPE)
+    endif ()
+endmacro ()
+
+macro (make_graph_benchmark target binary_name files)
+    if (CUDA_FOUND AND NOT no_cuda)
+        add_definitions(-DGRAPH_WORKLOADS)
+        cuda_add_executable (${target} EXCLUDE_FROM_ALL ${files} OPTIONS ${GPU_ARCHS} -D__CUDA__ -I/usr/include/python3.8) # Ugly bugly
+        target_compile_definitions (${target} PRIVATE __CUDA__)
+
+        include_directories(/home/csl/cuc1057/anaconda3/envs/csl4/include)
+        include_directories(/home/csl/cuc1057/anaconda3/envs/csl4/include/python3.8)
+        add_dependencies (${target} libnvm)
+        target_link_libraries (${target} libnvm)
+        target_link_libraries (${target} ${CUDA_LIBRARIES})
+
+        set_target_properties (${target} PROPERTIES OUTPUT_NAME "nvm-${binary_name}")
+
+        list (APPEND benchmark_targets "${target}")
+        set (benchmark_targets "${benchmark_targets}" PARENT_SCOPE)
+    endif ()
+endmacro ()
+
+
+
 macro (make_sisci_benchmark target binary_name files)
     if (CUDA_FOUND AND NOT no_cuda AND sisci_include AND sisci_lib AND NOT (no_smartio OR no_smartio_benchmarks))
         cuda_add_executable (${target} ${files} EXCLUDE_FROM_ALL OPTIONS ${GPU_ARCHS} -D__CUDA__ -D__DIS_CLUSTER__ -D_REENTRANT)
@@ -318,19 +363,14 @@ endif ()
 
 # Add individual benchmarks
 if (CUDA_FOUND AND NOT no_cuda)
-  add_subdirectory ("${benchmarks_root}/array")
-  add_subdirectory ("${benchmarks_root}/iodepth-block")
-  add_subdirectory ("${benchmarks_root}/block")
-  add_subdirectory ("${benchmarks_root}/readwrite")
-  add_subdirectory ("${benchmarks_root}/bfs")
-  add_subdirectory ("${benchmarks_root}/cc")
-  add_subdirectory ("${benchmarks_root}/pagerank")
-  add_subdirectory ("${benchmarks_root}/sssp")
-  add_subdirectory ("${benchmarks_root}/sssp_float")
-  add_subdirectory ("${benchmarks_root}/pattern")
-  add_subdirectory ("${benchmarks_root}/cache")
-  add_subdirectory ("${benchmarks_root}/vectoradd")
-  #add_subdirectory ("${benchmarks_root}/scan")
+  add_subdirectory ("${benchmarks_root}/multivectoradd")
+  #add_subdirectory ("${benchmarks_root}/pathfinder")
+  #add_subdirectory ("${benchmarks_root}/backprop")
+  #add_subdirectory ("${benchmarks_root}/hotspot")
+  #add_subdirectory ("${benchmarks_root}/srad_v2")
+  #add_subdirectory ("${benchmarks_root}/sssp")
+  #add_subdirectory ("${benchmarks_root}/bfs")
+  #add_subdirectory ("${benchmarks_root}/pr")
   add_custom_target (benchmarks DEPENDS ${benchmark_targets})
 endif ()
 

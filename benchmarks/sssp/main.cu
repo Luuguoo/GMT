@@ -51,9 +51,10 @@
 
 using error = std::runtime_error;
 using std::string;
-const char* const ctrls_paths[] = {"/dev/libnvm0", "/dev/libnvm1", "/dev/libnvm2", "/dev/libnvm3", "/dev/libnvm4", "/dev/libnvm5", "/dev/libnvm6", "/dev/libnvm7"};
+//const char* const ctrls_paths[] = {"/dev/libnvm0", "/dev/libnvm1", "/dev/libnvm2", "/dev/libnvm3", "/dev/libnvm4", "/dev/libnvm5", "/dev/libnvm6", "/dev/libnvm7"};
 //const char* const ctrls_paths[] = {"/dev/libnvm0", "/dev/libnvm2", "/dev/libnvm3", "/dev/libnvm4", "/dev/libnvm5", "/dev/libnvm6", "/dev/libnvm7"};
-//const char* const ctrls_paths[] = {"/dev/libnvm0"};
+const char* const ctrls_paths[] = {"/dev/libnvm0"};
+//const char* const ctrls_paths[] = {"/dev/libnvm_vmalloc0"};
 
 #define MYINFINITY 0xFFFFFFFF
 
@@ -67,6 +68,8 @@ const char* const ctrls_paths[] = {"/dev/libnvm0", "/dev/libnvm1", "/dev/libnvm2
 
 typedef uint64_t EdgeT;
 typedef uint32_t WeightT;
+// CHIA-HAO
+//typedef int32_t WeightT;
 
 typedef enum {
     BASELINE = 0,
@@ -86,6 +89,21 @@ typedef enum {
     DRAGON_MAP = 5,
     BAFS_DIRECT= 6,
 } mem_type;
+
+__global__ void print_arr(array_d_t<uint64_t>* d_arr, uint64_t* d, size_t size)
+{
+    for (size_t i = 0; i < size; i++) {
+        printf("[%ld] d_arr %lu - d %lu\n", i, d_arr->seq_read(i), d[i]);
+    }
+}
+
+__global__ void print_arr(array_d_t<uint32_t>* d_arr, uint32_t* d, size_t size)
+{
+    for (size_t i = 0; i < size; i++) {
+        printf("[%ld] d_arr %u - d %u\n", i, (uint32_t)d_arr->seq_read(i), (uint32_t)d[i]);
+    }
+}
+
 
 __global__ void kernel_baseline(bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count, const uint64_t *vertexList, const EdgeT *edgeList, const WeightT *weightList) {
     const uint64_t tid = blockDim.x * BLOCK_NUM * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
@@ -112,7 +130,8 @@ __global__ void kernel_baseline(bool *label, const WeightT *costList, WeightT *n
         label[tid] = false;
     }
 }
-__global__ __launch_bounds__(128,16)
+//__global__ __launch_bounds__(128,16)
+__global__
 void kernel_baseline_pc(array_d_t<uint64_t>* de,array_d_t<WeightT>* dw, bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count, const uint64_t *vertexList, const EdgeT *edgeList, const WeightT *weightList) {
     const uint64_t tid = blockDim.x * BLOCK_NUM * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
     // const uint64_t warpIdx = tid >> WARP_SHIFT;
@@ -132,8 +151,44 @@ void kernel_baseline_pc(array_d_t<uint64_t>* de,array_d_t<WeightT>* dw, bool *la
                 break;
             // const EdgeT next = edgeList[i];
             EdgeT next = de->seq_read(i);
+             //const WeightT weight = weightList[i];
+            WeightT weight = dw->seq_read(i);
+
+            //printf("[%lu]: next %lu (%lu) with weight %d (%d)\n", tid, next, edgeList[i], weight, weightList[i]);
+
+            if (newCostList[next] > cost + weight && i >= start)
+                atomicMin(&(newCostList[next]), cost + weight);
+        }
+
+        label[tid] = false;
+    }
+}
+
+// CHIA-HAO
+__global__
+void kernel_baseline_pc(array_d_t<uint64_t>* de,array_d_t<WeightT>* dw, bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count, array_d_t<uint64_t>* dv, /*const uint64_t *vertexList,*/ const EdgeT *edgeList, const WeightT *weightList) {
+    const uint64_t tid = blockDim.x * BLOCK_NUM * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    if (tid < vertex_count && label[tid]) {
+        //uint64_t start = vertexList[tid];
+        uint64_t start = dv->seq_read(tid);
+        // const uint64_t shift_start = start & 0xFFFFFFFFFFFFFFF0;
+        //uint64_t end = vertexList[tid+1];
+        uint64_t end = dv->seq_read(tid+1);
+
+        //printf("[%lu] start %lu (%lu), end %lu (%lu)\n", tid, start, vertexList[tid], end, vertexList[tid+1]);
+
+        WeightT cost = newCostList[tid];
+
+        // for(uint64_t i = shift_start + laneIdx; i < end; i += WARP_SIZE) {
+        for(uint64_t i = start; i < end; i += 1) {
+            if (newCostList[tid] != cost)
+                break;
+            // const EdgeT next = edgeList[i];
+            EdgeT next = de->seq_read(i);
             // const WeightT weight = weightList[i];
             WeightT weight = dw->seq_read(i);
+
+            //printf("[%lu]: next %lu (%lu) with weight %u (%u)\n", tid, next, edgeList[i], weight, weightList[i]);
 
             if (newCostList[next] > cost + weight && i >= start)
                 atomicMin(&(newCostList[next]), cost + weight);
@@ -171,8 +226,8 @@ __global__ void kernel_coalesce(bool *label, const WeightT *costList, WeightT *n
     }
 }
 
-__global__ __launch_bounds__(128,16)
-void kernel_coalesce_pc(array_d_t<uint64_t>* de,array_d_t<WeightT>* dw, bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count, const uint64_t *vertexList, const EdgeT *edgeList, const WeightT *weightList) {
+__global__
+void kernel_coalesce_pc(array_d_t<uint64_t>* de, array_d_t<WeightT>* dw, bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count, /*array_d_t<uint64_t*> dv*/const uint64_t *vertexList, const EdgeT *edgeList, const WeightT *weightList) {
     const uint64_t tid = blockDim.x * BLOCK_NUM * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
     const uint64_t warpIdx = tid >> WARP_SHIFT;
     const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
@@ -180,8 +235,43 @@ void kernel_coalesce_pc(array_d_t<uint64_t>* de,array_d_t<WeightT>* dw, bool *la
     // array_d_t<WeightT> d_warray = *dw;
     if (warpIdx < vertex_count && label[warpIdx]) {
         uint64_t start = vertexList[warpIdx];
+        //uint64_t start = dv->seq_read(warpIdx);
         const uint64_t shift_start = start & 0xFFFFFFFFFFFFFFF0;
         uint64_t end = vertexList[warpIdx+1];
+        //uint64_t end = dv->seq_read(warpIdx+1);
+
+        WeightT cost = newCostList[warpIdx];
+
+        for(uint64_t i = shift_start + laneIdx; i < end; i += WARP_SIZE) {
+            if (newCostList[warpIdx] != cost)
+                break;
+            // const EdgeT next = edgeList[i];
+            EdgeT next = de->seq_read(i);
+            // const WeightT weight = weightList[i];
+            WeightT weight = dw->seq_read(i);
+            if (newCostList[next] > cost + weight && i >= start)
+                atomicMin(&(newCostList[next]), cost + weight);
+        }
+
+        label[warpIdx] = false;
+    }
+}
+
+
+// CHIA-HAO
+__global__
+void kernel_coalesce_pc(array_d_t<uint64_t>* de, array_d_t<WeightT>* dw, bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count, array_d_t<uint64_t>* dv, const EdgeT *edgeList, const WeightT *weightList) {
+    const uint64_t tid = blockDim.x * BLOCK_NUM * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    const uint64_t warpIdx = tid >> WARP_SHIFT;
+    const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+    // array_d_t<uint64_t> d_earray = *de;
+    // array_d_t<WeightT> d_warray = *dw;
+    if (warpIdx < vertex_count && label[warpIdx]) {
+        //uint64_t start = vertexList[warpIdx];
+        uint64_t start = dv->seq_read(warpIdx);
+        const uint64_t shift_start = start & 0xFFFFFFFFFFFFFFF0;
+        //uint64_t end = vertexList[warpIdx+1];
+        uint64_t end = dv->seq_read(warpIdx+1);
 
         WeightT cost = newCostList[warpIdx];
 
@@ -266,6 +356,7 @@ void kernel_coalesce_chunk_pc(array_d_t<uint64_t>* de,array_d_t<WeightT>* dw, bo
                     break;
                 // const EdgeT next = edgeList[j];
                 EdgeT next = de->seq_read(j);
+
                 // const WeightT weight = weightList[j];
                 WeightT weight = dw->seq_read(j);
                 if (newCostList[next] > cost + weight && j >= start)
@@ -277,6 +368,49 @@ void kernel_coalesce_chunk_pc(array_d_t<uint64_t>* de,array_d_t<WeightT>* dw, bo
     }
 }
 
+// CHIA-HAO
+__global__ __launch_bounds__(128,16)
+void kernel_coalesce_chunk_pc(array_d_t<uint64_t>* de,array_d_t<WeightT>* dw, bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count, array_d_t<uint64_t>* dv, const EdgeT *edgeList, const WeightT *weightList) {
+    const uint64_t tid = blockDim.x * BLOCK_NUM * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    const uint64_t warpIdx = tid >> WARP_SHIFT;
+    const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+    const uint64_t chunkIdx = warpIdx * CHUNK_SIZE;
+    uint64_t chunk_size = CHUNK_SIZE;
+    // array_d_t<uint64_t> d_earray = *de;
+    // array_d_t<WeightT> d_warray = *dw;
+    if((chunkIdx + CHUNK_SIZE) > vertex_count) {
+        if ( vertex_count > chunkIdx )
+            chunk_size = vertex_count - chunkIdx;
+        else
+            return;
+    }
+
+    for(uint32_t i = chunkIdx; i < chunk_size + chunkIdx; i++) {
+        if (label[i]) {
+            //uint64_t start = vertexList[i];
+            uint64_t start = dv->seq_read(i);
+            const uint64_t shift_start = start & 0xFFFFFFFFFFFFFFF0;
+            //uint64_t end = vertexList[i+1];
+            uint64_t end = dv->seq_read(i+1);
+
+            WeightT cost = newCostList[i];
+
+            for(uint64_t j = shift_start + laneIdx; j < end; j += WARP_SIZE) {
+                if (newCostList[i] != cost)
+                    break;
+                // const EdgeT next = edgeList[j];
+                EdgeT next = de->seq_read(j);
+
+                // const WeightT weight = weightList[j];
+                WeightT weight = dw->seq_read(j);
+                if (newCostList[next] > cost + weight && j >= start)
+                    atomicMin(&(newCostList[next]), cost + weight);
+            }
+
+            label[i] = false;
+        }
+    }
+}
 
 
 __global__ void update(bool *label, WeightT *costList, WeightT *newCostList, const uint32_t vertex_count, bool *changed) {
@@ -317,8 +451,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    std::ifstream file, file2;
-    std::string vertex_file, edge_file, weight_file;
+    std::ifstream file, file2, file_meta;
+    std::string vertex_file, edge_file, weight_file, meta_file;
     std::string filename;
 
     bool changed_h, *changed_d, *label_d;
@@ -374,24 +508,37 @@ int main(int argc, char *argv[]) {
         cuda_err_chk(cudaEventCreate(&start));
         cuda_err_chk(cudaEventCreate(&end));
 
-        vertex_file = filename + ".col";
-        edge_file = filename + ".dst";
-        weight_file = filename + ".val";
+        //vertex_file = filename + ".col";
+        //edge_file = filename + ".dst";
+        //weight_file = filename + ".val";
+        vertex_file = filename + ".index";
+        edge_file = filename + ".edge";
+        meta_file = filename + ".meta";
+        weight_file = filename + ".weight";
+
 
         std::cout << filename << std::endl;
         fprintf(stderr, "File %s\n", filename.c_str());
         // Read files
         // Start reading vertex list
         file.open(vertex_file.c_str(), std::ios::in | std::ios::binary);
+        file_meta.open(meta_file.c_str(), std::ios::in | std::ios::binary);
         if (!file.is_open()) {
             fprintf(stderr, "Vertex file open failed\n");
             exit(1);
         };
+        if (!file_meta.is_open()) {
+            fprintf(stderr, "Vertex file open failed\n");
+            exit(1);
+        };
 
-        file.read((char*)(&vertex_count), 8);
-        file.read((char*)(&typeT), 8);
 
-        vertex_count--;
+        //file.read((char*)(&vertex_count), 8);
+        //file.read((char*)(&typeT), 8);
+        file_meta.read((char*)(&vertex_count), 8);
+        file_meta.read((char*)(&typeT), 8);
+
+        //vertex_count--;
 
         printf("Vertex: %llu, ", vertex_count);
         vertex_size = (vertex_count+1) * sizeof(uint64_t);
@@ -408,13 +555,16 @@ int main(int argc, char *argv[]) {
             exit(1);
         };
 
-        file.read((char*)(&edge_count), 8);
-        file.read((char*)(&typeT), 8);
+        file_meta.read((char*)(&edge_count), 8);
+        file_meta.close();
+        //file.read((char*)(&edge_count), 8);
+        //file.read((char*)(&typeT), 8);
 
         printf("Edge: %llu, ", edge_count);
         fflush(stdout);
         edge_size = edge_count * sizeof(EdgeT);
-        edge_size = edge_size + (4096 - (edge_size & 0xFFFULL));
+        //edge_size = edge_size + (4096 - (edge_size & 0xFFFULL));
+        edge_size = edge_size + (65536 - (edge_size & 0xFFFFULL));
 
         edgeList_h = NULL;
 
@@ -425,13 +575,15 @@ int main(int argc, char *argv[]) {
             exit(1);
         };
 
-        file2.read((char*)(&weight_count), 8);
-        file2.read((char*)(&typeT), 8);
+        //file2.read((char*)(&weight_count), 8);
+        //file2.read((char*)(&typeT), 8);
+        weight_count = edge_count;
 
         printf("Weight: %llu\n", weight_count);
         fflush(stdout);
         weight_size = weight_count * sizeof(WeightT);
-        weight_size = weight_size + (4096 - (weight_size & 0xFFFULL));
+        //weight_size = weight_size + (4096 - (weight_size & 0xFFFULL));
+        weight_size = weight_size + (settings.pageSize - (weight_size & (settings.pageSize-1)));
 
         weightList_h = NULL;
 
@@ -589,6 +741,30 @@ int main(int argc, char *argv[]) {
             cuda_err_chk(cudaMemcpy(edgeList_d, edgeList_h, edge_size, cudaMemcpyHostToDevice));
             cuda_err_chk(cudaMemcpy(weightList_d, weightList_h, weight_size, cudaMemcpyHostToDevice));
         }
+        // CHIA_HAO
+        else if (mem == BAFS_DIRECT) {
+            /*
+            edgeList_h = (EdgeT*)malloc(edge_size);
+
+            file.open(edge_file.c_str(), std::ios::in | std::ios::binary);
+            file.read((char*)edgeList_h, edge_size);
+            file.close();
+
+
+            file2.open(weight_file.c_str(), std::ios::in | std::ios::binary);
+            weightList_h = (WeightT*)malloc(weight_size);
+            file2.read((char*)weightList_h, weight_size);
+
+            cuda_err_chk(cudaMalloc((void**)&edgeList_d, edge_size));
+            cuda_err_chk(cudaMalloc((void**)&weightList_d, weight_size));
+
+            for (uint64_t i = 0; i < weight_count; i++)
+                weightList_h[i] += offset;
+
+            cuda_err_chk(cudaMemcpy(edgeList_d, edgeList_h, edge_size, cudaMemcpyHostToDevice));
+            cuda_err_chk(cudaMemcpy(weightList_d, weightList_h, weight_size, cudaMemcpyHostToDevice));
+            */
+        }
 
 
         switch (type) {
@@ -635,14 +811,19 @@ int main(int argc, char *argv[]) {
         page_cache_t* h_pc;
 
         range_t<uint64_t>* h_erange;
+        range_t<uint64_t>* h_vrange;
         range_t<WeightT>* h_wrange;
         std::vector<range_t<uint64_t>*> vec_erange(1);
+        std::vector<range_t<uint64_t>*> vec_vrange(1);
         std::vector<range_t<WeightT>*> vec_wrange(1);
         array_t<uint64_t>* h_earray;
+        array_t<uint64_t>* h_varray;
         array_t<WeightT>* h_warray;
 
         uint64_t n_epages = ceil(((float)edge_size)/pc_page_size);  
-        uint64_t n_wpages = ceil(((float)weight_size)/pc_page_size); 
+        uint64_t n_vpages = ceil(((float)vertex_size)/pc_page_size);
+        uint64_t n_wpages = ceil(((float)weight_size)/pc_page_size);
+        printf("#edge pages %lu - #vertex pages %lu - #weight pages %lu\n", n_epages, n_vpages, n_wpages);
 
 
         if((type == BASELINE_PC) || (type == COALESCE_PC) ||(type == COALESCE_CHUNK_PC)){
@@ -650,17 +831,41 @@ int main(int argc, char *argv[]) {
             // h_erange = new range_t<uint64_t>((int)0 , (uint64_t)edge_count, (int) 0, (uint64_t)n_epages, (int)0, (uint64_t)pc_page_size, h_pc, settings, (uint8_t*)edgeList_d);
             // h_wrange = new range_t<WeightT>((int)0 ,     (uint64_t)weight_count, (int) 0, (uint64_t)n_wpages, (int)0,      (uint64_t)pc_page_size, h_pc, settings, (uint8_t*)weightList_d);
             h_erange = new range_t<uint64_t>((uint64_t)0 ,(uint64_t)edge_count, (uint64_t) (ceil(settings.ofileoffset*1.0/pc_page_size)),(uint64_t)n_epages, (uint64_t)0, (uint64_t)pc_page_size, h_pc, settings.cudaDevice); 
-            h_wrange = new range_t<WeightT>((uint64_t)0 ,(uint64_t)weight_count,(uint64_t) (ceil(settings.wfileoffset*1.0/pc_page_size)),(uint64_t)n_wpages, (uint64_t)0, (uint64_t)pc_page_size, h_pc, settings.cudaDevice); 
+            
+            // CHIA-HAO
+            h_vrange = new range_t<uint64_t>((uint64_t)0 ,(uint64_t)vertex_count+1, (uint64_t)n_epages, (uint64_t)n_vpages, (uint64_t)0, (uint64_t)pc_page_size, h_pc, settings.cudaDevice); 
+            //h_wrange = new range_t<WeightT>((uint64_t)0 ,(uint64_t)weight_count,(uint64_t) (ceil(settings.wfileoffset*1.0/pc_page_size)),(uint64_t)n_wpages, (uint64_t)0, (uint64_t)pc_page_size, h_pc, settings.cudaDevice); 
+            h_wrange = new range_t<WeightT>((uint64_t)0 ,(uint64_t)weight_count,(uint64_t)n_epages+n_vpages, (uint64_t)n_wpages, (uint64_t)0, (uint64_t)pc_page_size, h_pc, settings.cudaDevice); 
             
             vec_erange[0] = h_erange;
             vec_wrange[0] = h_wrange;
-            h_earray = new array_t<uint64_t>(edge_count, settings.ofileoffset, vec_erange, settings.cudaDevice);
-            h_warray = new array_t<WeightT>(weight_count,settings.wfileoffset, vec_wrange, settings.cudaDevice);
+            //h_earray = new array_t<uint64_t>(edge_count, settings.ofileoffset, vec_erange, settings.cudaDevice);
+            //h_warray = new array_t<WeightT>(weight_count,settings.wfileoffset, vec_wrange, settings.cudaDevice);
+
+            // CHIA-HAO
+            vec_vrange[0] = h_vrange;
+            h_earray = new array_t<uint64_t>(edge_count, settings.ofileoffset, vec_erange, settings.cudaDevice, 0);
+            h_varray = new array_t<uint64_t>(vertex_count+1, settings.ofileoffset+n_epages, vec_vrange, settings.cudaDevice, 1);
+            h_warray = new array_t<WeightT>(weight_count, settings.ofileoffset+n_epages+n_vpages, vec_wrange, settings.cudaDevice, 2);
+            
+            // Debug
+            //print_arr<<<1,1>>>(h_earray->d_array_ptr, (uint64_t*)edgeList_d, (size_t)edge_count);
+            //print_arr<<<1,1>>>(h_varray->d_array_ptr, (uint64_t*)vertexList_d, (size_t)(vertex_count+1));
+            //print_arr<<<1,1>>>(h_warray->d_array_ptr, weightList_d, (size_t)weight_count);
+            //cudaDeviceSynchronize();
 
             printf("Page cache initialized\n");
             fflush(stdout);
         }
 
+    #if USE_HOST_CACHE
+        //HostCache* host_cache = createHostCache(ctrls[0], settings.maxPageCacheSize);
+        HostCache* host_cache = createHostCache(ctrls[0], 0);
+        fprintf(stderr, "Host Cache created\n");
+        
+        //Shct* h_shct = new Shct(pc_pages);
+        //INIT_SHARED_MEM_PTR(Shct, h_shct, gpu_shct);
+    #endif
 
 
         // Set root
@@ -694,13 +899,36 @@ int main(int argc, char *argv[]) {
                         kernel_coalesce_chunk<<<blockDim_kernel, numthreads>>>(label_d, costList_d, newCostList_d, vertex_count, vertexList_d, edgeList_d, weightList_d);
                         break;
                     case BASELINE_PC:
-                        kernel_baseline_pc<<<blockDim_kernel, numthreads>>>(h_earray->d_array_ptr,h_warray->d_array_ptr,label_d, costList_d, newCostList_d, vertex_count, vertexList_d, edgeList_d, weightList_d);
+#if USE_HOST_CACHE
+                        //kernel_baseline_pc<<<blockDim_kernel, numthreads, 0, stream_mngr->kernel_stream>>>(h_earray->d_array_ptr, h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, vertexList_d, edgeList_d, weightList_d);
+
+                        kernel_baseline_pc<<<blockDim_kernel, numthreads, 0, stream_mngr->kernel_stream>>>(h_earray->d_array_ptr, h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, h_varray->d_array_ptr, edgeList_d, weightList_d);
+                        cudaStreamSynchronize(stream_mngr->kernel_stream);
+#else
+                        //kernel_baseline_pc<<<blockDim_kernel, numthreads>>>(h_earray->d_array_ptr, h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, vertexList_d, edgeList_d, weightList_d);
+                        kernel_baseline_pc<<<blockDim_kernel, numthreads>>>(h_earray->d_array_ptr, h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, h_varray->d_array_ptr, vertexList_d, edgeList_d, weightList_d);
+                        cudaDeviceSynchronize();
+#endif
                         break;
                     case COALESCE_PC:
-                        kernel_coalesce_pc<<<blockDim_kernel, numthreads>>>(h_earray->d_array_ptr,h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, vertexList_d, edgeList_d, weightList_d);
+#if USE_HOST_CACHE
+                        kernel_coalesce_pc<<<blockDim_kernel, numthreads, 0, stream_mngr->kernel_stream>>>(h_earray->d_array_ptr,h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, h_varray->d_array_ptr, edgeList_d, weightList_d);
+
+#else
+                        //kernel_coalesce_pc<<<blockDim_kernel, numthreads>>>(h_earray->d_array_ptr,h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, vertexList_d, edgeList_d, weightList_d);
+                        kernel_coalesce_pc<<<blockDim_kernel, numthreads>>>(h_earray->d_array_ptr,h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, h_varray->d_array_ptr, edgeList_d, weightList_d);
+#endif
                         break;
                     case COALESCE_CHUNK_PC:
-                        kernel_coalesce_chunk_pc<<<blockDim_kernel, numthreads>>>(h_earray->d_array_ptr,h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, vertexList_d, edgeList_d, weightList_d);
+#if USE_HOST_CACHE
+                        //kernel_coalesce_chunk_pc<<<blockDim_kernel, numthreads, 0, stream_mngr->kernel_stream>>>(h_earray->d_array_ptr,h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, vertexList_d, edgeList_d, weightList_d);
+                        kernel_coalesce_chunk_pc<<<blockDim_kernel, numthreads, 0, stream_mngr->kernel_stream>>>(h_earray->d_array_ptr,h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, h_varray->d_array_ptr, edgeList_d, weightList_d);
+                        cudaStreamSynchronize(stream_mngr->kernel_stream);
+#else
+                        //kernel_coalesce_chunk_pc<<<blockDim_kernel, numthreads>>>(h_earray->d_array_ptr, h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, vertexList_d, edgeList_d, weightList_d);
+                        kernel_coalesce_chunk_pc<<<blockDim_kernel, numthreads>>>(h_earray->d_array_ptr, h_warray->d_array_ptr, label_d, costList_d, newCostList_d, vertex_count, h_varray->d_array_ptr, edgeList_d, weightList_d);
+                        cudaDeviceSynchronize();
+#endif
                         break;
                     default:
                         fprintf(stderr, "Invalid type\n");
@@ -722,6 +950,7 @@ int main(int argc, char *argv[]) {
                 //    std::cout << std::dec << "Time: " << elapsed.count() << " ms" << std::endl;
                 //}
                 //break;
+                printf("iter %u done\n", iter);
             } while(changed_h);
 
             cuda_err_chk(cudaEventRecord(end, 0));
@@ -733,8 +962,8 @@ int main(int argc, char *argv[]) {
                   printf("iteration %*u, ", 3, iter);
                   printf("time %*f ms\n", 12, milliseconds);
                   if(mem == BAFS_DIRECT) {
-                     h_earray->print_reset_stats();
-                     h_warray->print_reset_stats();
+                     //h_earray->print_reset_stats();
+                     //h_warray->print_reset_stats();
                   }
                   fflush(stdout);
 
@@ -786,8 +1015,9 @@ int main(int argc, char *argv[]) {
 //        printf("Average run time %f ms\n", avg_milliseconds / num_run);
         printf("\nSSSP Graph:%s \t Impl: %d \t SSD: %d \t PageSize: %d \t AvgTime %f ms\n", filename.c_str(), type, settings.n_ctrls, settings.pageSize, avg_milliseconds / num_run);
 
-
-
+        h_earray->print_reset_stats();
+        h_varray->print_reset_stats();
+        h_warray->print_reset_stats();
 
         free(vertexList_h);
         if (edgeList_h)
@@ -814,6 +1044,8 @@ int main(int argc, char *argv[]) {
             cuda_err_chk(cudaFree(weightList_d));
             cuda_err_chk(cudaFree(edgeList_d));
         }
+        
+        revokeHostRuntime();
 
         for (size_t i = 0 ; i < settings.n_ctrls; i++)
              delete ctrls[i];

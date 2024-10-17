@@ -8,6 +8,7 @@ find_package (CUDA 8.0 REQUIRED)
 
 
 
-make_benchmark (bfs-benchmark-module bfs-bench "main.cu;")
+#make_benchmark (bfs-benchmark-module bfs-bench "main.cu;")
+make_graph_benchmark (bfs-benchmark-module bfs-bench "main.cu;")
 
 make_benchmark_choice (bfs-benchmark bfs-benchmark-smartio bfs-benchmark-module)

@@ -39,6 +39,7 @@
 struct Controller
 {
     simt::atomic<uint64_t, simt::thread_scope_device> access_counter;
+    simt::atomic<uint64_t, simt::thread_scope_device> write_io_counter;
     nvm_ctrl_t*             ctrl;
     nvm_aq_ref              aq_ref;
     DmaPtr                  aq_mem;
@@ -85,8 +86,10 @@ using std::string;
 
 inline void Controller::print_reset_stats(void) {
     cuda_err_chk(cudaMemcpy(&access_counter, d_ctrl_ptr, sizeof(simt::atomic<uint64_t, simt::thread_scope_device>), cudaMemcpyDeviceToHost));
-    std::cout << "------------------------------------" << std::endl;
+    cuda_err_chk(cudaMemcpy(&write_io_counter, (void*)(((unsigned char*)d_ctrl_ptr)+sizeof(simt::atomic<uint64_t, simt::thread_scope_device>)), sizeof(simt::atomic<uint64_t, simt::thread_scope_device>), cudaMemcpyDeviceToHost));
     std::cout << std::dec << "#SSDAccesses:\t" << access_counter << std::endl;
+    std::cout << "------------------------------------" << std::endl;
+    std::cout << std::dec << "#Write IOs:\t" << write_io_counter << std::endl;
 
     cuda_err_chk(cudaMemset(d_ctrl_ptr, 0, sizeof(simt::atomic<uint64_t, simt::thread_scope_device>)));
 }

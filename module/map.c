@@ -34,7 +34,8 @@ static struct map* create_descriptor(const struct ctrl* ctrl, u64 vaddr, unsigne
     unsigned long i;
     struct map* map = NULL;
 
-    map = kvmalloc(sizeof(struct map) + (n_pages - 1) * sizeof(uint64_t), GFP_KERNEL);
+    //map = kvmalloc(sizeof(struct map) + (n_pages - 1) * sizeof(uint64_t), GFP_KERNEL);
+    map = vmalloc(sizeof(struct map) + (n_pages - 1) * sizeof(uint64_t));
     if (map == NULL)
     {
         printk(KERN_CRIT "Failed to allocate mapping descriptor\n");
@@ -134,7 +135,8 @@ static long map_user_pages(struct map* map)
     struct page** pages;
     struct device* dev;
 
-    pages = (struct page**) kvcalloc(map->n_addrs, sizeof(struct page*), GFP_KERNEL);
+    //pages = (struct page**) kvcalloc(map->n_addrs, sizeof(struct page*), GFP_KERNEL);
+    pages = (struct page**) vmalloc(map->n_addrs * sizeof(struct page*));
     if (pages == NULL)
     {
         printk(KERN_CRIT "Failed to allocate page array\n");

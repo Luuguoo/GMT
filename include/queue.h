@@ -54,6 +54,8 @@ struct QueuePair
 
 #define MAX_SQ_ENTRIES_64K  (64*1024/64)
 #define MAX_CQ_ENTRIES_64K  (64*1024/16)
+#define MAX_SQ_ENTRIES_2M  (2*1024*1024/64)
+#define MAX_CQ_ENTRIES_2M  (2*1024*1024/16)
 
     inline void init_gpu_specific_struct( const uint32_t cudaDevice) {
         this->sq_tickets = createBuffer(this->sq.qs * sizeof(padded_struct), cudaDevice);
@@ -64,6 +66,13 @@ struct QueuePair
         //this->sq.head_mark = (padded_struct*) this->sq_head_mark.get();
         this->sq.tail_mark = (padded_struct*) this->sq_tail_mark.get();
         this->sq.cid = (padded_struct*) this->sq_cid.get();
+        
+        // CHIA-HAO
+        //#if ENABLE_HOST_QUEUE && !defined(__CUDA_ARCH__)
+        //this->sq.cid_h = new padded_struct_h();
+        //this->sq.pos_locks_h = new padded_struct_h();
+        //#endif
+    
     //    std::cout << "init_gpu_specific: " << std::hex << this->sq.cid <<  std::endl;
         this->sq.qs_minus_1 = this->sq.qs - 1;
         this->sq.qs_log2 = (uint32_t) std::log2(this->sq.qs);
@@ -84,6 +93,135 @@ struct QueuePair
        // this->cq.clean_cid = (uint16_t*) this->cq_clean_cid.get();
     }
 
+    // CHIA-HAO
+    inline void init_cpu_specific_struct() {
+        this->sq_tickets = createBuffer(this->sq.qs * sizeof(padded_struct));
+        //this->sq_head_mark = createBuffer(this->sq.qs * sizeof(padded_struct), cudaDevice);
+        this->sq_tail_mark = createBuffer(this->sq.qs * sizeof(padded_struct));
+        this->sq_cid = createBuffer(65536 * sizeof(padded_struct));
+        this->sq.tickets = (padded_struct*) this->sq_tickets.get();
+        //this->sq.head_mark = (padded_struct*) this->sq_head_mark.get();
+        this->sq.tail_mark = (padded_struct*) this->sq_tail_mark.get();
+        this->sq.cid = (padded_struct*) this->sq_cid.get();
+        
+        // CHIA-HAO
+        //#if ENABLE_HOST_QUEUE && !defined(__CUDA_ARCH__)
+        //this->sq.cid_h = new padded_struct_h();
+        //this->sq.pos_locks_h = new padded_struct_h();
+        //#endif
+    
+    //    std::cout << "init_gpu_specific: " << std::hex << this->sq.cid <<  std::endl;
+        this->sq.qs_minus_1 = this->sq.qs - 1;
+        this->sq.qs_log2 = (uint32_t) std::log2(this->sq.qs);
+
+
+        //this->cq_tickets = createBuffer(this->cq.qs * sizeof(padded_struct), cudaDevice);
+        this->cq_head_mark = createBuffer(this->cq.qs * sizeof(padded_struct));
+        //this->cq_tail_mark = createBuffer(this->cq.qs * sizeof(padded_struct), cudaDevice);
+        //this->cq.tickets = (padded_struct*) this->cq_tickets.get();
+        this->cq.head_mark = (padded_struct*) this->cq_head_mark.get();
+        //this->cq.tail_mark = (padded_struct*) this->cq_tail_mark.get();
+        this->cq.qs_minus_1 = this->cq.qs - 1;
+        this->cq.qs_log2 = (uint32_t) std::log2(this->cq.qs);
+        this->cq_pos_locks = createBuffer(this->cq.qs * sizeof(padded_struct));
+        this->cq.pos_locks = (padded_struct*) this->cq_pos_locks.get();
+
+        //this->cq_clean_cid = createBuffer(this->cq.qs * sizeof(uint16_t), cudaDevice);
+       // this->cq.clean_cid = (uint16_t*) this->cq_clean_cid.get();
+    }
+
+    inline QueuePair( const nvm_ctrl_t* ctrl, const struct nvm_ns_info ns, const struct nvm_ctrl_info info, nvm_aq_ref& aq_ref, const uint16_t qp_id, const uint64_t queueDepth)
+    {
+        uint64_t cap = ((volatile uint64_t*) ctrl->mm_ptr)[0];
+        bool cqr = (cap & 0x0000000000010000) == 0x0000000000010000;
+    
+        uint64_t sq_size = (cqr) ?
+            ((MAX_SQ_ENTRIES_2M <= ((((volatile uint16_t*) ctrl->mm_ptr)[0] + 1) )) ? MAX_SQ_ENTRIES_2M :  ((((volatile uint16_t*) ctrl->mm_ptr)[0] + 1) ) ) :
+            ((((volatile uint16_t*) ctrl->mm_ptr)[0] + 1) );
+        uint64_t cq_size = (cqr) ?
+            ((MAX_CQ_ENTRIES_2M <= ((((volatile uint16_t*) ctrl->mm_ptr)[0] + 1) )) ? MAX_CQ_ENTRIES_2M :  ((((volatile uint16_t*) ctrl->mm_ptr)[0] + 1) ) ) :
+            ((((volatile uint16_t*) ctrl->mm_ptr)[0] + 1) );
+        sq_size = std::min(queueDepth, sq_size);
+        cq_size = std::min(queueDepth, cq_size);
+
+        bool sq_need_prp = false;//(!cqr) || (sq_size > MAX_SQ_ENTRIES_64K);
+        bool cq_need_prp = false;// (!cqr) || (cq_size > MAX_CQ_ENTRIES_64K);
+
+        printf("sq entries %lu, cq entries %lu\n", sq_size, cq_size);
+        size_t sq_mem_size =  sq_size * sizeof(nvm_cmd_t) + sq_need_prp*(64*1024);
+        size_t cq_mem_size =  cq_size * sizeof(nvm_cpl_t) + cq_need_prp*(64*1024);
+
+        //this->sq_mem = createDma(ctrl, NVM_PAGE_ALIGN(sq_mem_size, 1UL << 12));
+        //this->cq_mem = createDma(ctrl, NVM_PAGE_ALIGN(cq_mem_size, 1UL << 12));
+        
+        this->sq_mem = createDma(ctrl, NVM_PAGE_ALIGN(sq_mem_size, 1UL << 21));
+        this->cq_mem = createDma(ctrl, NVM_PAGE_ALIGN(cq_mem_size, 1UL << 21));
+        
+        int ret = mlock(this->sq_mem->vaddr, NVM_PAGE_ALIGN(sq_mem_size, 1UL << 21));
+        if (ret != 0) {
+            fprintf(stderr, "mlock for sq_mem failed...\n");
+            exit(1);
+        }
+        ret = mlock(this->cq_mem->vaddr, NVM_PAGE_ALIGN(cq_mem_size, 1UL << 21));
+        if (ret != 0) {
+            fprintf(stderr, "mlock for cq_mem failed...\n");
+            exit(1);
+        }
+
+        this->pageSize = info.page_size;
+        this->block_size = ns.lba_data_size;
+        this->block_size_minus_1 = ns.lba_data_size-1;
+        this->block_size_log = std::log2(ns.lba_data_size);
+        this->nvmNamespace = ns.ns_id;
+        this->qp_id = qp_id;
+    
+        uint64_t prev_addr;
+        bool failed = false;
+        for (uint32_t i = 0; i < this->sq_mem->n_ioaddrs; i++) {
+            //printf("sq page[%u]: vaddr %lx (paddr %lx)\n", i, (uint64_t)this->sq_mem->vaddr+i*ctrl->page_size, this->sq_mem->ioaddrs[i]);
+            if (i > 0 && ((prev_addr + 4096) != this->sq_mem->ioaddrs[i])) {
+                fprintf(stderr, "sq mem is not allocated as continuous\n");
+                //exit(1);
+                failed = true;
+            }
+            prev_addr = this->sq_mem->ioaddrs[i];
+        }
+        //if (failed) exit(1);
+
+        for (uint32_t i = 0; i < this->cq_mem->n_ioaddrs; i++) {
+            //printf("cq page[%u]: vaddr %lx (paddr %lx)\n", i, (uint64_t)this->cq_mem->vaddr+i*ctrl->page_size, this->cq_mem->ioaddrs[i]);
+            if (i > 0 && ((prev_addr + 4096) != this->cq_mem->ioaddrs[i])) {
+                fprintf(stderr, "cq mem is not allocated as continuous\n");
+                failed = true;
+            }
+            prev_addr = this->cq_mem->ioaddrs[i];
+        }
+        //if (failed) exit(1);
+
+
+        // Create completion queue
+        int status = nvm_admin_cq_create(aq_ref, &this->cq, qp_id, this->cq_mem.get(), 0, cq_size, cq_need_prp/*false: physically contiguous*/);
+        if (!nvm_ok(status))
+        {
+            throw error(string("Failed to create completion queue: ") + nvm_strerror(status));
+        }
+        ret = mlock((void*)this->cq.db, NVM_PAGE_ALIGN(sizeof(volatile uint32_t*), 1UL<<12));
+        // std::cout << "after nvm_admin_cq_create\n";
+
+        // Create submission queue
+        status = nvm_admin_sq_create(aq_ref, &this->sq, &this->cq, qp_id, this->sq_mem.get(), 0, sq_size, sq_need_prp);
+        if (!nvm_ok(status))
+        {
+            throw error(string("Failed to create submission queue: ") + nvm_strerror(status));
+        }
+        ret = mlock((void*)this->sq.db, NVM_PAGE_ALIGN(sizeof(volatile uint32_t*), 1UL<<12));
+
+        //this->sq.cid_h = new padded_struct_h();
+        //this->sq.pos_locks_h = new padded_struct_h();
+
+        init_cpu_specific_struct();
+
+    }
 
 
     inline QueuePair( const nvm_ctrl_t* ctrl, const uint32_t cudaDevice, const struct nvm_ns_info ns, const struct nvm_ctrl_info info, nvm_aq_ref& aq_ref, const uint16_t qp_id, const uint64_t queueDepth)
@@ -183,7 +321,7 @@ struct QueuePair
         {
             throw error(string("Failed to create completion queue: ") + nvm_strerror(status));
         }
-        // std::cout << "after nvm_admin_cq_create\n";
+         std::cout << "after nvm_admin_cq_create: " << "cq->vaddr " << this->cq_mem->vaddr << std::endl;
 
         // Get a valid device pointer for CQ doorbell
         void* devicePtr = nullptr;

@@ -493,6 +493,23 @@ Settings::Settings()
     tsize = 0; 
     maxPageCacheSize = 8589934592;
     ssdtype = 0;
+
+    // CHIA-HAO
+    numQueues = 1;
+    cudaDevice = 0;
+    pageSize = 65536;
+    maxPageCacheSize = 8589934592/2; // 4GB
+    type = 3; // BASELINE_PC
+    //type = 4; // COALESCE_PC
+    type = 4; // COALESCE_CHUNK_PC
+    type = 27; // OPTIMIZED_PC
+    memalloc = 6; //
+    numThreads = 128;
+    //input = "/home/csl/cuc1057/BaM/bam/benchmarks/pagerank/pr_data128M";
+    input = "/export/home3/cuc1057/graph_data/arc130/arc130.csr";
+    input = "/export/home3/cuc1057/graph_data/GAP-kron/GAP-kron.csr";
+    src = 0;
+    repeat = 1;
 }
 
 

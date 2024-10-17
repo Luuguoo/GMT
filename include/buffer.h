@@ -7,6 +7,12 @@
 // #define __host__
 // #endif
 
+#include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+
 #include <memory>
 #include <cstddef>
 #include <cstdint>
@@ -22,6 +28,10 @@
 #include <cstdlib>
 #include <iostream>
 #include "util.h"
+
+#define ADDR (void *)(0x0UL)
+#define FLAGS (MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB)
+#define PROTECTION (PROT_READ | PROT_WRITE)
 
 using error = std::runtime_error;
 using std::string;
@@ -50,6 +60,9 @@ BufferPtr createBuffer(size_t size);
 
 
 BufferPtr createBuffer(size_t size, int cudaDevice);
+
+// CHIA-HAO
+bool useHugePage = false;
 
 static void getDeviceMemory(int device, void*& bufferPtr, void*& devicePtr, size_t size, void*& origPtr)
 {
@@ -159,7 +172,33 @@ inline DmaPtr createDma(const nvm_ctrl_t* ctrl, size_t size)
     }
     */
 
-    int err  = posix_memalign(&buffer, 4096, size);
+    int err = 0;
+
+    //if (useHugePage && !force_use_4k_page) {
+    if (useHugePage) {
+        #if 0
+        madvise(buffer, size, MADV_HUGEPAGE);
+        err = posix_memalign(&buffer, 2*1024*1024, size);
+        #else
+        buffer = mmap(ADDR, size, PROTECTION, FLAGS, -1, 0);
+        if (buffer == MAP_FAILED) {
+            perror("mmap");
+            exit(1);
+        }
+        #endif
+
+        printf("buffer created %p\n", buffer);
+    }
+    else {
+        //madvise(buffer, size, MADV_NOHUGEPAGE);
+        err = posix_memalign(&buffer, 65536, size);
+    }
+    // CHIA-HAO
+    //cudaHostRegister(buffer, (size_t)8*1024*1024*1024, cudaHostRegisterDefault);
+    //if (useHugePage) {
+    //    madvise(buffer, size, MADV_HUGEPAGE);
+    //}
+    //mlock(buffer, size);
 
     if (err) {
         throw error(string("Failed to allocate host memory: ") + std::to_string(err));
@@ -172,10 +211,26 @@ inline DmaPtr createDma(const nvm_ctrl_t* ctrl, size_t size)
         throw error(string("Failed to map host memory: ") + nvm_strerror(status));
     }
 
-    return DmaPtr(dma, [buffer](nvm_dma_t* dma) {
+    bool is_hugetlb = useHugePage;
+
+    printf("Creating Host DMA: %p (size %lu)\n", buffer, size);
+    return DmaPtr(dma, [buffer, is_hugetlb, size](nvm_dma_t* dma) {
         nvm_dma_unmap(dma);
         //cudaFreeHost(buffer);
-        free(buffer);
+        if (is_hugetlb) {
+            printf("Deleting Host DMA: %p (size %lu)\n", buffer, size);
+            if (munmap(buffer, size)) {
+                perror("munmap");
+                exit(1);
+            }
+            else {
+                printf("munamp succ: %p - size %lu\n", buffer, size);
+            }
+        }
+        else {
+            printf("free buffer %p\n", buffer);
+            free(buffer);
+        }
     });
 }
 
@@ -212,10 +267,14 @@ inline DmaPtr createDma(const nvm_ctrl_t* ctrl, size_t size, int cudaDevice)
     }
     dma->vaddr = bufferPtr;
 
+    std::cout << "Createing DMA: " << origPtr << "\n";
     return DmaPtr(dma, [bufferPtr, origPtr](nvm_dma_t* dma) {
-        nvm_dma_unmap(dma);
-        cudaFree(origPtr);
-        //std::cout << "Deleting DMA\n";
+        std::cout << "Deleting DMA: " << origPtr << "\n";
+        if (dma)
+            nvm_dma_unmap(dma);
+        if (origPtr)
+            cudaFree(origPtr);
+        std::cout << "Deleting DMA: " << origPtr << " finished."<< "\n";
     });
 }
 
@@ -253,8 +312,10 @@ inline BufferPtr createBuffer(size_t size, int cudaDevice)
     //std::cout << "createbuffer: " << std::hex << bufferPtr <<  std::endl;
 
     return BufferPtr(bufferPtr, [origPtr](void* ptr) {
-        __ignore(ptr);
-        cudaFree(origPtr);
+        if (ptr) {
+            __ignore(ptr);
+            cudaFree(origPtr);
+        }
         //std::cout << "Deleting Buffer\n";
     });
 }

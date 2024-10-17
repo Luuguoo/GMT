@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <simt/atomic>
+#include <atomic>
 
 #ifndef __align__ 
 #define __align__(x)
@@ -97,6 +98,12 @@ typedef struct __align__(32)
     //uint8_t pad[32-8];
 } __attribute__((aligned (32))) padded_struct;
 
+typedef struct __align__(32)
+{
+    std::atomic<uint32_t>  val;
+    //uint8_t pad[32-8];
+} __attribute__((aligned (32))) padded_struct_h;
+
 /* typedef struct __align__(32) */
 /* { */
 /*     simt::atomic<uint32_t, simt::thread_scope_system>  val; */
@@ -140,14 +147,18 @@ typedef struct
     simt::atomic<uint32_t, simt::thread_scope_device> in_ticket;
     uint8_t pad6[28];
     simt::atomic<uint32_t, simt::thread_scope_device> cid_ticket;
-    //uint8_t pad7[28];
+    uint8_t pad7[28];
+    #if 0
+    simt::atomic<uint32_t, simt::thread_scope_device> out_ticket;
+    uint8_t pad8[28];
+    #endif
     padded_struct* tickets;
 
     padded_struct* head_mark;
     padded_struct* tail_mark;
     padded_struct* cid;
-    padded_struct* pos_locks;
 
+    padded_struct* pos_locks;
     uint16_t* clean_cid;
     uint32_t qs_minus_1;
     uint32_t qs_log2;
@@ -162,9 +173,24 @@ typedef struct
     volatile uint32_t*      db;             // Pointer to doorbell register (NB! write only)
     volatile void*          vaddr;          // Virtual address to start of queue memory
     uint64_t                ioaddr;         // Physical/IO address to start of queue memory
+
+    // CHIA-HAO
+    //#define ENABLE_HOST_QUEUE 1
+    //#if !defined(__CUDA_ARCH__) && ENABLE_HOST_QUEUE
+    //padded_struct_h* cid_h;
+    //padded_struct_h* pos_locks_h;
+    //std::atomic<uint32_t> tail_lock_h;
+    //std::atomic<uint32_t> head_lock_h;
+    //#endif
 } nvm_queue_t;
 
-
+// CHIA-HAO
+typedef struct {
+    padded_struct_h* cid_h;
+    padded_struct_h* pos_locks_h;
+    std::atomic<uint32_t> tail_lock_h;
+    std::atomic<uint32_t> head_lock_h;
+} nvm_queue_host_t;
 
 /*
  * Convenience type for representing a single-page PRP list.

@@ -52,6 +52,11 @@ static int ioctl_map(const struct device* dev, const struct va_range* va, uint64
 {
     const struct ioctl_mapping* m = _nvm_container_of(va, struct ioctl_mapping, range);
     enum nvm_ioctl_type type;
+    
+    printf("NVM_MAP_HOST_MEMORY %u\n", NVM_MAP_HOST_MEMORY);
+    printf("NVM_MAP_DEVICE_MEMORY %u\n", NVM_MAP_DEVICE_MEMORY);
+    printf("NVM_MAP_KERNEL_MEMORY %u\n", NVM_MAP_KERNEL_MEMORY);
+
 
     switch (m->type)
     {

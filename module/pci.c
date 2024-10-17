@@ -16,7 +16,7 @@
 #include <asm/errno.h>
 #include <asm/page.h>
 
-#define DRIVER_NAME         "libnvm helper"
+#define DRIVER_NAME         "libnvm"
 #define PCI_CLASS_NVME      0x010802
 #define PCI_CLASS_NVME_MASK 0xffffff
 
@@ -172,6 +172,14 @@ static long map_ioctl(struct file* file, unsigned int cmd, unsigned long arg)
 #endif
             retval = -EINVAL;
             printk(KERN_WARNING "Mapping for address %llx not found\n", addr);
+            break;
+        
+        case NVM_MAP_KERNEL_MEMORY:
+            if (copy_from_user(&request, (void __user*) arg, sizeof(request)))
+            {
+                return -EFAULT;
+            }
+
             break;
 
         default:

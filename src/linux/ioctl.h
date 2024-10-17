@@ -23,10 +23,15 @@ struct nvm_ioctl_map
 enum nvm_ioctl_type
 {
     NVM_MAP_HOST_MEMORY         = _IOW(NVM_IOCTL_TYPE, 1, struct nvm_ioctl_map),
+    //NVM_MAP_HOST_MEMORY         = 12345678,
 #ifdef _CUDA
     NVM_MAP_DEVICE_MEMORY       = _IOW(NVM_IOCTL_TYPE, 2, struct nvm_ioctl_map),
+    //NVM_MAP_DEVICE_MEMORY       = 12345679,
 #endif
-    NVM_UNMAP_MEMORY            = _IOW(NVM_IOCTL_TYPE, 3, uint64_t)
+    NVM_UNMAP_MEMORY            = _IOW(NVM_IOCTL_TYPE, 3, uint64_t),
+    //NVM_UNMAP_MEMORY            = 12345680,
+    NVM_MAP_KERNEL_MEMORY       = _IOW(NVM_IOCTL_TYPE, 4, uint64_t)
+    //NVM_MAP_KERNEL_MEMORY       = 12345681
 };
 
 

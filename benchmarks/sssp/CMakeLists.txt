@@ -8,6 +8,7 @@ find_package (CUDA 8.0 REQUIRED)
 
 
 
-make_benchmark (sssp-benchmark-module sssp-bench "main.cu;")
+#make_benchmark (sssp-benchmark-module sssp-bench "main.cu;")
+make_graph_benchmark (sssp-benchmark-module sssp-bench "main.cu;")
 
 make_benchmark_choice (sssp-benchmark sssp-benchmark-smartio sssp-benchmark-module)

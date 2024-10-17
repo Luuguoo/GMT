@@ -465,25 +465,33 @@ Settings::Settings()
     numPages = 1024;
     startBlock = 0;
     stats = false;
-    input = nullptr;
+    input = "/export/home3/cuc1057/graph_data/arc130/arc130.weight.csr";
+    input = "/export/home3/cuc1057/graph_data/GAP-kron/GAP-kron.weighted.csr";
+    //input = "/export/home3/cuc1057/graph_data/GAP-urand/GAP-urand.weighted.csr";
     output = nullptr;
+    
     ofileoffset = 0;
-    wfileoffset = 34359738368;
-    type = 1;
-    memalloc = 2; 
-    numThreads = 1024;
+    //wfileoffset = 34359738368;
+    wfileoffset = 0;
+    //type = 1;
+    type = 3; //BASELINE_PC
+    type = 4; //COALESCE_PC
+    type = 5; //COALESCE_CHUNK_PC 
+    //memalloc = 2; 
+    memalloc = 6; //BAFS_DIRECT 
+    numThreads = 128;
     blkSize = 64;
     domain = 0;
     bus = 0;
     devfn = 0;
     n_ctrls = 1;
     queueDepth = 1024;
-    numQueues = 128;
-    pageSize = 4096;
+    numQueues = 8;
+    pageSize = 65536;
     numElems = 2147483648;
     repeat = 32;
-    src = 0;
-    maxPageCacheSize = 8589934592;
+    src = 1;
+    maxPageCacheSize = 8589934592/2;
 }
 
 

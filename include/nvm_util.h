@@ -294,4 +294,12 @@ __forceinline__ __device__ uint32_t get_smid() {
      return ret;
 }
 
+// CHIA-HAO
+__forceinline__ __device__ uint32_t get_oid() {
+    #ifdef __CUDACC__
+    return __popc(__activemask() & ((0x1<<lane_id())-1));
+    #endif
+}
+
+
 #endif /* __NVM_UTIL_H__ */
